@@ -128,8 +128,7 @@ describe('SubscriptionOverlay — overview screen', () => {
         credits_remaining: '420',
         cycle_ends_at: '2026-07-01T00:00:00Z',
         pending_downgrade_tier_name: null,
-        pending_downgrade_at: null,
-        is_past_due: false
+        pending_downgrade_at: null
       },
       tiers: [
         tier({ tier_id: 'free', name: 'Free', tier_order: 0 }),
@@ -154,8 +153,7 @@ describe('SubscriptionOverlay — overview screen', () => {
         credits_remaining: '3000',
         cycle_ends_at: '2026-07-01T00:00:00Z',
         pending_downgrade_tier_name: null,
-        pending_downgrade_at: null,
-        is_past_due: false
+        pending_downgrade_at: null
       },
       tiers: [
         tier({ tier_id: 'free', name: 'Free', tier_order: 0 }),
@@ -182,8 +180,7 @@ describe('SubscriptionOverlay — overview screen', () => {
         credits_remaining: '500',
         cycle_ends_at: '2026-07-01T00:00:00Z',
         pending_downgrade_tier_name: null,
-        pending_downgrade_at: null,
-        is_past_due: false
+        pending_downgrade_at: null
       },
       tiers: [tier({ tier_id: 'pro', name: 'Pro', tier_order: 1, is_current: true })]
     })
@@ -203,8 +200,7 @@ describe('SubscriptionOverlay — overview screen', () => {
         credits_remaining: '500',
         cycle_ends_at: '2026-07-01T00:00:00Z',
         pending_downgrade_tier_name: 'Free',
-        pending_downgrade_at: '2026-07-15T00:00:00Z',
-        is_past_due: false
+        pending_downgrade_at: '2026-07-15T00:00:00Z'
       },
       tiers: [
         tier({ tier_id: 'free', name: 'Free', tier_order: 0 }),
@@ -216,28 +212,6 @@ describe('SubscriptionOverlay — overview screen', () => {
 
     expect(out).toContain('Scheduled to switch to Free')
     expect(out).toContain('2026-07-15T00:00:00Z')
-  })
-
-  it('dunning: past due shows past-due banner (does NOT re-offer fresh subscribe)', () => {
-    const s = state({
-      current: {
-        tier_id: 'pro',
-        tier_name: 'Pro',
-        monthly_credits: '1000',
-        credits_remaining: '500',
-        cycle_ends_at: '2026-07-01T00:00:00Z',
-        pending_downgrade_tier_name: null,
-        pending_downgrade_at: null,
-        is_past_due: true
-      },
-      tiers: [tier({ tier_id: 'pro', name: 'Pro', tier_order: 1, is_current: true })]
-    })
-
-    const out = render(overlay(s))
-
-    expect(out).toContain('Payment past due')
-    expect(out).toContain('still active until')
-    expect(out).toContain('2026-07-01T00:00:00Z')
   })
 })
 
@@ -259,10 +233,10 @@ describe('SubscriptionOverlay — confirm screen', () => {
 })
 
 describe('SubscriptionOverlay — handoff screen', () => {
-  it('shows opening-stripe copy', () => {
+  it('shows opening-subscription-page copy', () => {
     const out = render(overlay(state(), 'handoff'))
 
-    expect(out).toContain('Opening Stripe')
+    expect(out).toContain('Opening your subscription page')
     expect(out).toContain('browser')
     expect(out).toContain('Re-run /subscription')
   })

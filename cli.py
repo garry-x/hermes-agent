@@ -8012,7 +8012,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
             self._show_usage()
         elif canonical == "credits":
             self._show_credits()
-        elif canonical == "billing":
+        elif canonical == "subscription":
+            self._show_subscription()
+        elif canonical == "topup":
             self._show_billing(cmd_original)
         elif canonical == "insights":
             self._show_insights(cmd_original)
@@ -8782,7 +8784,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         which would otherwise early-return before any credits showed.
         """
         if not self.agent:
-            if not self._print_nous_credits_block():
+            if self._print_nous_credits_block():
+                self._print_usage_cta()
+            else:
                 print("(._.) No active agent -- send a message first.")
             return
 
@@ -8790,7 +8794,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         calls = agent.session_api_calls
 
         if calls == 0:
-            if not self._print_nous_credits_block():
+            if self._print_nous_credits_block():
+                self._print_usage_cta()
+            else:
                 print("(._.) No API calls made yet in this session.")
             return
 
@@ -8887,7 +8893,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
         # Nous credits magnitudes + monthly-grant gauge (agent-independent — also
         # runs at the no-agent / no-calls early-returns above). See the helper.
-        self._print_nous_credits_block()
+        if self._print_nous_credits_block():
+            self._print_usage_cta()
 
         if self.verbose:
             logging.getLogger().setLevel(logging.DEBUG)
@@ -8924,6 +8931,187 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         for line in lines:
             print(f"  {line}")
         return True
+
+    def _print_usage_cta(self) -> None:
+        """Print the `/usage` call-to-action pointing at /subscription + /topup.
+
+        Mirrors the TUI's ``USAGE_CTA`` (``session.ts``) so every surface ends a
+        usage read with the same nudge. Only called when a Nous account is logged
+        in (the credits block printed), since both commands are Nous-account only.
+        """
+        _cprint(f"  {_d('Run /subscription to change plan · /topup to add credits')}")
+
+    # ------------------------------------------------------------------
+    # /subscription — view plan + change it in the browser (CLI surface)
+    # ------------------------------------------------------------------
+
+    def _show_subscription(self):
+        """`/subscription` (alias `/upgrade`) — view the Nous plan + browser hand-off.
+
+        The CLI mirror of the TUI ``SubscriptionOverlay``: a read of the current
+        plan, this cycle's subscription credits, renewal date, and the plans you
+        could switch to — then a deep-link to NAS's own ``/manage-subscription``
+        page (NOT the Stripe portal; that page routes upgrade→Checkout /
+        downgrade→scheduled internally). The terminal NEVER charges for a
+        subscription. Fail-open: logged-out / portal hiccup degrades to a clear
+        message, never a crash. Mirrors ``_show_credits`` / ``_show_billing``
+        discipline for the interactive-vs-text split.
+        """
+        from agent.subscription_view import build_subscription_state, subscription_manage_url
+
+        state = build_subscription_state()
+
+        if not state.logged_in:
+            print()
+            if state.error:
+                _cprint(f"  💳 {_d(f'Could not load subscription: {state.error}')}")
+            else:
+                _cprint(f"  💳 {_d('Not logged into Nous Portal.')}")
+                print("  Run `hermes portal` to log in, then /subscription.")
+            return
+
+        # Team context: no personal plan — teams run on shared credits.
+        if state.context == "team":
+            print()
+            _cprint(f"  ⚕ {_b('Team subscription')}")
+            print(f"  {'─' * 41}")
+            if state.org_name:
+                role = (state.role or "").title()
+                _org_line = f"Org: {state.org_name}{f' · {role}' if role else ''}"
+                _cprint(f"  {_d(_org_line)}")
+            org = state.org_name or "a team org"
+            print(f"  This terminal is connected to {org}. Teams run on shared")
+            print("  credits — use /topup to add funds.")
+            _cprint(f"  {_d('Personal subscriptions live on your personal account.')}")
+            return
+
+        self._subscription_overview(state, subscription_manage_url(state))
+
+    def _subscription_overview(self, state, manage_url):
+        """Print the plan read block + tier list, then the browser hand-off."""
+        from agent.billing_view import format_money
+
+        c = state.current
+        is_free = not (c and c.tier_id)
+        can_change = state.can_change_plan and state.is_admin
+
+        print()
+        if is_free:
+            _cprint(f"  ⚕ {_b('Subscribe to a plan')}")
+        else:
+            _cprint(f"  ⚕ {_b(f'Your plan: {c.tier_name or c.tier_id}')}")
+        print(f"  {'─' * 41}")
+
+        # Usage bar from the subscription allowance (monthly vs remaining).
+        if c and c.monthly_credits and c.credits_remaining:
+            try:
+                monthly = float(c.monthly_credits)
+                remaining = float(c.credits_remaining)
+            except (TypeError, ValueError):
+                monthly = remaining = 0.0
+            if monthly > 0:
+                spent = max(0.0, monthly - remaining)
+                bar, pct = self._billing_spend_bar(spent, monthly)
+                # Credits are a COUNT, not money — grouped integers, no "$".
+                def _grp(v):
+                    try:
+                        return f"{int(float(v)):,}"
+                    except (TypeError, ValueError):
+                        return str(v)
+                print(
+                    f"  {_grp(c.credits_remaining)} of {_grp(c.monthly_credits)} "
+                    f"remaining   {bar} {100 - pct}% left"
+                )
+        if c and c.cycle_ends_at:
+            print(f"  Renews: {c.cycle_ends_at}")
+
+        if state.org_name:
+            role = (state.role or "").title()
+            _org_line = f"Org: {state.org_name}{f' · {role}' if role else ''}"
+            _cprint(f"  {_d(_org_line)}")
+        print(f"  {'─' * 41}")
+
+        # Headline precedence: cancel-scheduled > downgrade-pending.
+        if c and c.cancel_at_period_end:
+            if c.cancellation_effective_at:
+                _cprint(f"  {_d(f'Cancels on {c.cancellation_effective_at} — your plan stays active until then.')}")
+            else:
+                _cprint(f"  {_d('Cancellation scheduled — your plan stays active until the end of the billing period.')}")
+        elif c and c.pending_downgrade_tier_name:
+            when = c.pending_downgrade_at or "the end of the cycle"
+            _cprint(f"  {_d(f'Scheduled to switch to {c.pending_downgrade_tier_name} on {when}.')}")
+
+        # Tier catalog (enabled tiers, current marked). Read-only for members.
+        enabled = [t for t in state.tiers if t.is_enabled]
+        if enabled:
+            print()
+            for t in enabled:
+                mark = "✓ " if t.is_current else "  "
+                price = format_money(t.dollars_per_month) if t.dollars_per_month is not None else "$0"
+                # Credits are a COUNT, not money — render grouped, no "$".
+                if t.monthly_credits is not None:
+                    try:
+                        credits = f"{int(t.monthly_credits):,}"
+                    except (TypeError, ValueError):
+                        credits = str(t.monthly_credits)
+                else:
+                    credits = "0"
+                _cprint(f"  {mark}{t.name} — {price}/mo ({credits} credits)")
+
+        if not can_change:
+            print()
+            _cprint(f"  {_d('Plan changes need an org admin/owner.')}")
+            if manage_url:
+                print(f"  Manage on portal: {manage_url}")
+            return
+
+        if not manage_url:
+            print()
+            _cprint(f"  {_d('No manage URL available — is your portal configured?')}")
+            return
+
+        # Non-interactive (TUI slash-worker / piped / no live app): the
+        # prompt_toolkit modal can't run here. Render the text hand-off — the
+        # URL is the affordance, same discipline as _show_credits.
+        if not getattr(self, "_app", None):
+            print()
+            print(f"  Change plan: {manage_url}")
+            print("  Finish the change in your browser, then re-run /subscription.")
+            return
+
+        print()
+        choices = [
+            ("open", "Open subscription page", "change your plan in the browser"),
+            ("copy", "Copy link", "copy the manage-subscription URL to your clipboard"),
+            ("cancel", "Cancel", "do nothing"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="⚕ Change your plan?",
+            detail=f"Manage your subscription in your browser:\n{manage_url}",
+            choices=choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, choices)
+
+        if choice == "open":
+            opened = False
+            try:
+                import webbrowser
+
+                opened = webbrowser.open(manage_url)
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"  Open this URL to change your plan: {manage_url}")
+            print()
+            print("  Finish the change in your browser, then re-run /subscription.")
+        elif choice == "copy":
+            try:
+                self._write_osc52_clipboard(manage_url)
+                print(f"  📋 Copied: {manage_url}")
+            except Exception:
+                print(f"  Manage URL: {manage_url}")
+        else:
+            print("  🟡 Cancelled. No plan change.")
 
     def _show_credits(self):
         """`/credits` — focused Nous credit balance + top-up handoff.
@@ -9363,15 +9551,33 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
 
     def _billing_render_charge_error(self, state, exc):
         """Render a typed BillingError at submit time (pre-poll)."""
-        from hermes_cli.nous_billing import BillingRateLimited
+        from hermes_cli.nous_billing import (
+            BillingRateLimited,
+            BillingRemoteSpendingRevoked,
+            BillingSessionRevoked,
+        )
 
         code = getattr(exc, "error", None)
+        actor = getattr(exc, "actor", None)
         portal_url = getattr(exc, "portal_url", None) or getattr(state, "portal_url", None)
-        if code == "no_payment_method":
+        if isinstance(exc, BillingRemoteSpendingRevoked) or code == "remote_spending_revoked":
+            # CF-4: this terminal's spend was revoked. Recovery is reconnect.
+            who = ("An admin stopped this terminal's spending."
+                   if actor == "admin"
+                   else "You stopped this terminal's spending.")
+            print(f"  🔴 {who} Reconnect to restore — run `hermes portal` to re-authorize.")
+        elif isinstance(exc, BillingSessionRevoked) or code == "session_revoked":
+            print("  🔴 Your session was logged out. Run `hermes portal` to log in again.")
+        elif code == "no_payment_method":
             print("  💳 No saved card for terminal charges yet. Set one up on the "
                   "portal (one-time credit buys don't save a reusable card).")
-        elif code == "cli_billing_disabled":
-            print("  🔴 Terminal billing is turned off for this org — an admin must enable it on the portal.")
+        elif code in ("cli_billing_disabled", "remote_spending_disabled") or \
+                getattr(exc, "code", None) == "remote_spending_disabled":
+            print("  🔴 Remote Spending is off for this account — an admin must enable it on the portal.")
+        elif code == "role_required":
+            print("  🔴 Buying credits needs an org admin/owner. Ask an admin, or manage on the portal.")
+        elif code == "idempotency_conflict":
+            print("  🔴 That charge key was already used for a different amount. Start a fresh top-up.")
         elif code == "monthly_cap_exceeded":
             remaining = (getattr(exc, "payload", {}) or {}).get("remainingUsd")
             if remaining is not None:
