@@ -148,15 +148,16 @@ still isn't enabled for this org — enable it on the portal, then retry.`
 ## Text-mode (CLI) parity
 
 `cli.py`'s `_show_billing` / `_billing_overview` and `_show_subscription` /
-`_subscription_overview` are read-mostly mirrors of the same state shapes
-(balance title, two-bar dollar usage, auto-reload line, card line, monthly
-cap) and share the "fail-open on logged-out/portal-hiccup, never crash"
-discipline. The CLI's `/subscription` has **no in-terminal tier picker or
-upgrade flow** — its only action is `_billing_portal_hint`'s deep-link to
-`subscription_manage_url`; all plan changes happen on the portal. `/topup`'s
-interactive modal (prompt_toolkit) is closer to parity with the TUI overlay,
-but non-interactive contexts (TUI slash-worker, no live app) fall back to the
-same text + portal-link rendering as `/subscription`, never prompting.
+`_subscription_overview` render the same state shapes (balance title, two-bar
+dollar usage, auto-reload line, card line, monthly cap) and share the
+"fail-open on logged-out/portal-hiccup, never crash" discipline. The CLI's
+`/subscription` gives a paid admin/owner in an interactive context the **full
+in-terminal change flow** (tier picker → preview → confirm → apply, parity
+with the TUI overlay); members and non-interactive contexts fall back to
+`_billing_portal_hint`'s deep-link to `subscription_manage_url`. `/topup`'s
+interactive modal (prompt_toolkit) mirrors the TUI overlay the same way, and
+non-interactive contexts fall back to the same text + portal-link rendering,
+never prompting.
 
 ## Forward compatibility
 
