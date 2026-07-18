@@ -251,7 +251,7 @@ SILENT_MARKER = "[SILENT]"
 # a marker is the entire response OR appears as its own first/last line — but
 # NOT when a token merely appears mid-sentence in a genuine report (e.g.
 # "I considered staying [SILENT] but here is the summary…" must deliver).
-_CRON_SILENCE_TOKENS = frozenset({"[SILENT]", "SILENT", "NO_REPLY", "NO REPLY"})
+_CRON_SILENCE_TOKENS = frozenset({"[SILENT]", "SILENT", "NO_REPLY", "NO REPLY", "[\u9759\u9ed8]", "\u9759\u9ed8"})
 
 
 def _is_cron_silence_response(text: str) -> bool:
@@ -285,6 +285,10 @@ def _is_cron_silence_response(text: str) -> bool:
     # form so a bare word like "Silent retry succeeded" is NOT swallowed.
     upper = stripped.upper()
     if upper.startswith("[SILENT]"):
+        return True
+    # Chinese variant [\u9759\u9ed8] (deepseek-v4-pro sometimes emits this
+    # instead of the English [SILENT] marker).
+    if stripped.startswith("[\u9759\u9ed8]"):
         return True
     return False
 
