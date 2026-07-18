@@ -99,12 +99,27 @@ MESSAGE_DEDUP_TTL_SECONDS = 300
 def _is_stale_session_ret(
     ret: "Optional[int]", errcode: "Optional[int]", errmsg: "Optional[str]",
 ) -> bool:
-    """True when iLink returns ret=-2 / errcode=-2 with 'unknown error',
-    which is a stale-session signal (same as errcode=-14) rather than
-    a genuine rate limit."""
+    """True when iLink returns ret=-2 / errcode=-2 with a stale-session
+    signal (``'unknown error'``, ``'prepare failed'``, or an empty/None
+    message) rather than a genuine rate limit.
+
+    Empirically iLink uses ``ret=-2`` for both stale sessions and rate
+    limits. The ``errmsg`` distinguishes them: populated messages such as
+    ``'rate limited'`` / ``'frequency limit'`` are real rate limits, while
+    the above three variants indicate the server-side session/context is
+    not ready and a tokenless retry (or session sync) should be attempted.
+    """
     if ret != RATE_LIMIT_ERRCODE and errcode != RATE_LIMIT_ERRCODE:
         return False
-    return (errmsg or "").lower() == "unknown error"
+    msg = (errmsg or "").lower().strip()
+    result = msg in {"unknown error", "prepare failed", ""}
+    if not result:
+        logger.debug(
+            "weixin: _is_stale_session_ret=False: ret=%s errcode=%s errmsg=%r "
+            "(expected one of 'unknown error', 'prepare failed', or empty)",
+            ret, errcode, errmsg,
+        )
+    return result
 
 
 MEDIA_IMAGE = 1
